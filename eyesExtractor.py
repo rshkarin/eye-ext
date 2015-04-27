@@ -12,8 +12,8 @@ from java.lang import Character
 from fiji.threshold import Auto_Threshold
 import os, sys, datetime, math, csv, codecs, cStringIO
 
-inputPath = "/Users/rshkarin/Documents/Fishes"
-outputPath = "/Users/rshkarin/Documents/Eyes"
+inputPath = "/Users/rshkarin/Documents/Eye centroids detection/Data"
+outputPath = "/Users/rshkarin/Documents/Eye centroids detection/Eyes"
 
 fishPrefix = "fish"
 fileExt = ".tif"
@@ -159,7 +159,6 @@ Kind of statistic:
 2 - The product of centroids (X*Y)
 '''
 def getStackCirlceCurve(imp, statistics, headings, kind=0):
-	x = range(imp.getStackSize())
 	y = []
 	
 	for i in x:
@@ -171,7 +170,7 @@ def getStackCirlceCurve(imp, statistics, headings, kind=0):
 			else:
 				y.append(statistics['Area'])
 
-	return x, y
+	return y
 
 '''
 Get the circle statistic of the stack along the specific direction
@@ -229,7 +228,7 @@ def getCirlcesStatistics(imp, outputPath, fishNumber, direction, min_area=0, min
 '''
 Get bounding box of eyes region at specific slice
 '''
-def getEyesBoundingArea(imp, sliceIdx, min_area=600):
+def getEyesBoundingArea(imp, sliceIdx, min_area=600, depth=60):
 	paOptions = ParticleAnalyzer.SHOW_PROGRESS + ParticleAnalyzer.CLEAR_WORKSHEET
 	paMeasurements = Measurements.AREA + Measurements.RECT
 	rt = ResultsTable()
@@ -259,7 +258,10 @@ def getEyesBoundingArea(imp, sliceIdx, min_area=600):
 	x, y = statisticsDict['BX'][maxAreaIdx], statisticsDict['BY'][maxAreaIdx]
 	width, height = statisticsDict['Width'][maxAreaIdx], statisticsDict['Height'][maxAreaIdx]
 
-	return x, y, width, height
+	z = sliceIdx - int(depth/2)
+	z = 0 if z < 0 else z
+
+	return (x, y, z, width, height, depth)
 
 '''
 Get left and right eyes' bounding box centroids
@@ -282,6 +284,246 @@ def saveTiff(imp, outputPath, currentFileName):
 	fileSaver = FileSaver(imp)
 	currentFileName = 'inverted_binary_' + currentFileName
 	fileSaver.saveAsTiffStack(os.path.join(outputPath, currentFileName))
+
+'''
+0 - Frontal (x, y, z)
+1 - Top (x, z, y) with respect to frontal
+2 - Right (y, z, x) with respect to frontal
+'''
+def getEyeCoordinate(orientFrontCoord=None, orientTopCoord=None, orientRightCoord=None):
+	nCoords = 0
+	nCoords = nCoords + (1 if orientFrontCoord else 0)
+	nCoords = nCoords + (1 if orientTopCoord else 0)
+	nCoords = nCoords + (1 if orientRightCoord else 0)
+
+	xVal, yVal, zVal = 0., 0., 0.
+
+	xVal = xVal + (orientFrontCoord[0] if orientFrontCoord else 0)
+	xVal = xVal + (orientTopCoord[0] if orientTopCoord else 0)
+	xVal = xVal + (orientRightCoord[1] if orientRightCoord else 0)
+
+	yVal = yVal + (orientFrontCoord[1] if orientFrontCoord else 0)
+	yVal = yVal + (orientTopCoord[2] if orientTopCoord else 0)
+	yVal = yVal + (orientRightCoord[0] if orientRightCoord else 0)
+
+	zVal = zVal + (orientFrontCoord[2] if orientFrontCoord else 0)
+	zVal = zVal + (orientTopCoord[1] if orientTopCoord else 0)
+	zVal = zVal + (orientRightCoord[1] if orientRightCoord else 0)
+
+	#print xVal, yVal, zVal
+
+	return (xVal / float(nCoords), yVal / float(nCoords), zVal / float(nCoords))
+
+'''
+0 - Frontal (x, y, z)
+1 - Top (x, z, y) with respect to frontal
+2 - Right (y, z, x) with respect to frontal
+3 - Skip slice
+CC - centroid coordinate
+
+Return values
+ 1 - Left eye
+ 2 - Right eye
+-1 - Unknown
+'''
+def eyesSide(coord, BBox=None, sliceIdx=0, orientation=0, restrictedByDepth=False):
+	LEyeCC = ()
+	REyeCC = ()
+
+	if not BBox:
+		return -1
+
+	if restrictedByDepth:
+		if orientation == 0:
+			if sliceIdx not in range(int(BBox[2]), int(BBox[2] + BBox[5] + 1)):
+				print "Frontal Value %f not in range from %d to %d" % (sliceIdx, int(BBox[2]), int(BBox[2] + BBox[5] + 1))
+				return 3
+		elif orientation == 1:
+			if sliceIdx not in range(int(BBox[1]), int(BBox[1] + BBox[4] + 1)):
+				print "Top Value %f not in range from %d to %d" % (sliceIdx, int(BBox[1]), int(BBox[1] + BBox[4] + 1))
+				return 3
+		elif orientation == 2:
+			if sliceIdx not in range(int(BBox[0]), int(BBox[0] + BBox[3] + 1)):
+				print "Right Value %f not in range from %d to %d" % (sliceIdx, int(BBox[0]), int(BBox[0] + BBox[3] + 1))
+				return 3
+		else:
+			print "Unknown error of input coordinates and bounding box."
+
+	if orientation == 0:
+		LEyeCC, REyeCC = getLeftRightEyesCentroids(BBox[0], BBox[1], BBox[3], BBox[4])
+	elif orientation == 1:
+		LEyeCC, REyeCC = getLeftRightEyesCentroids(BBox[0], BBox[2], BBox[3], BBox[5])
+	elif orientation == 2:
+		LEyeCC, REyeCC = getLeftRightEyesCentroids(BBox[1], BBox[2], BBox[4], BBox[5])
+
+	#print LEyeCC, REyeCC
+
+	LDist = math.sqrt((coord[0] - LEyeCC[0]) ** 2 + (coord[1] - LEyeCC[1]) ** 2)
+	RDist = math.sqrt((coord[0] - REyeCC[0]) ** 2 + (coord[1] - REyeCC[1]) ** 2)
+
+	if LDist < RDist:
+		return 1
+	elif RDist < LDist:
+		return 2
+	else:
+		return -1
+
+def average(s):
+	return sum(s) * 1.0 / len(s)
+
+def variance(x):
+	return map(lambda y: (y - average(x)) ** 2, x)
+
+def stdev(x):
+	return math.sqrt(average(variance(x)))
+
+def calcStd(i, array, num_neighbours):
+	L2 = (num_neighbours - 1) / 2
+
+	values = array[i - L2:i + L2 + 1]
+
+	if not sum(values):
+		return 0
+
+	num_neighbours_recalc = num_neighbours if len(values) == num_neighbours else len(values)
+
+	return 1./stdev(values)
+
+def gauss(n=11,sigma=1):
+	r = range(-int(n/2),int(n/2)+1)
+	return [1 / (sigma * math.sqrt(2*math.pi)) * math.exp(-float(x)**2/(2*sigma**2)) for x in r]
+
+def calcGauss(i, array, num_neighbours, gaussVals):
+	L2 = (num_neighbours - 1) / 2
+
+	values = array[i - L2:i + L2 + 1]
+
+	if not sum(values):
+		return 0
+
+	new_vals = values
+
+	for i in range(len(values)):
+		new_vals[i] = values[i] * gaussVals[i]
+
+	return sum(new_vals)
+
+'''
+Obtain preliminary BBox position on frontal Z direction
+'''
+def getPreliminaryBBoxZPosition(dotXY, areas, sliceIdxs, maxPrelimBBoxZPosResidual=100):
+	gaussVals = gauss(9, 9)
+
+	smoothAreaValues = [gaussVals(i, areas, 9, gaussVals) for i in range(len(areas))]
+	smoothXYValues = [calcStd(i, dotXY, 5) for i in range(len(dotXY))]
+
+	maxSmoothXY = max(smoothXYValues)
+	maxSmoothArea = max(smoothAreaValues)
+
+	residualsXY = []
+	residualsAreas = []
+
+	for xyVal in dotXY:
+		residualsXY.append(abs(xyVal - maxSmoothXY))
+
+	for areaVal in areas:
+		residualsAreas.append(abs(areaVal - maxSmoothArea))
+
+	idxMinResidualSmoothXY = residualsXY.index(min(residualsXY))
+	idxMinResidualSmoothArea = residualsAreas.index(min(residualsAreas))
+
+	prelimBBoxZPosXY = sliceIdxs[idxMinResidualSmoothXY]
+	prelimBBoxZPosArea = sliceIdxs[idxMinResidualSmoothArea]
+
+	if abs(prelimBBoxZPosXY - prelimBBoxZPosArea) > maxPrelimBBoxZPosResidual:
+		print "Warning: very big difference between XY and area Z positions, the biggest will selected."
+
+	return prelimBBoxZPosXY
+
+'''
+Get eye coordinates by direction
+'''
+def getEyesCoordinatesByOrientation(centerX, centerY, indices, sliceIdxs, orientation, BBox, restrictedByDepth, neighbourSlices):
+	leftEye = []
+	rightEye = []
+
+	for x, y, idx, sliceIdx in zip(centerX, centerY, indices, sliceIdxs):
+		if eyesSide((x, y), BBox, sliceIdx, orientation, restrictedByDepth) == 1:
+			leftEye.append(idx)
+		elif eyesSide((x, y), BBox, sliceIdx, orientation, restrictedByDepth) == 2:
+			rightEye.append(idx)
+		elif eyesSide((x, y), BBox, sliceIdx, orientation, restrictedByDepth) == 3:
+			print "Slice %d: skipped." % sliceIdx
+		else:
+			print "Slice %d: something is wrong." % sliceIdx
+
+	lEyeValuesArea = [areas[lIdx] for lIdx in leftEye]
+	rEyeValuesArea = [areas[rIdx] for rIdx in rightEye]
+
+	#print "LEyeMaxAreaSlice = %d, REyeMaxAreaSlice = %d" % (sliceIdxs[leftEye[lEyeValuesArea.index(max(lEyeValuesArea))]], sliceIdxs[rightEye[rEyeValuesArea.index(max(rEyeValuesArea))]])
+	
+	lEyeValuesXY = [dotXY[lIdx] for lIdx in leftEye]
+	rEyeValuesXY = [dotXY[rIdx] for rIdx in rightEye]
+
+	lEyeValuesXYFilt = [calcStd(i, lEyeValuesXY, 5) for i in range(len(lEyeValuesXY))]
+	rEyeValuesXYFilt = [calcStd(i, rEyeValuesXY, 5) for i in range(len(rEyeValuesXY))]
+
+	#First pass - detect preliminary eyes position
+	lEyeXYMaxVal = max(lEyeValuesXYFilt)
+	rEyeXYMaxVal = max(rEyeValuesXYFilt)
+
+	lEyeValuesXYFiltMaxIndex = lEyeValuesXYFilt.index(lEyeXYMaxVal)
+	rEyeValuesXYFiltMaxIndex = rEyeValuesXYFilt.index(rEyeXYMaxVal)
+
+	lEyePrelimZPos = sliceIdxs[leftEye[lEyeValuesXYFilt.index(lEyeXYMaxVal)]]
+	rEyePrelimZPos = sliceIdxs[rightEye[rEyeValuesXYFilt.index(rEyeXYMaxVal)]]
+
+	lEyeAllowedRange = leftEye[((lEyeValuesXYFiltMaxIndex - neighbourSlices) if (lEyeValuesXYFiltMaxIndex - neighbourSlices) >= 0 else 0) : 
+								(lEyeValuesXYFiltMaxIndex + neighbourSlices) if (lEyeValuesXYFiltMaxIndex + neighbourSlices) < len(leftEye) else len(leftEye) - 1]
+
+	rEyeAllowedRange = rightEye[((rEyeValuesXYFiltMaxIndex - neighbourSlices) if (rEyeValuesXYFiltMaxIndex - neighbourSlices) >= 0 else 0) : 
+								(rEyeValuesXYFiltMaxIndex + neighbourSlices) if (rEyeValuesXYFiltMaxIndex + neighbourSlices) < len(rightEye) else len(rightEye) - 1]
+
+	lEyeAreaAllowed = [areas[i] for i in lEyeAllowedRange]
+	rEyeAreaAllowed = [areas[i] for i in rEyeAllowedRange]
+
+	#Seond pass - detect end eyes position
+	lEyeEndXPos = centerX[leftEye[lEyeValuesArea.index(max(lEyeAreaAllowed))]]
+	rEyeEndXPos = centerX[rightEye[rEyeValuesArea.index(max(rEyeAreaAllowed))]]
+
+	lEyeEndYPos = centerY[leftEye[lEyeValuesArea.index(max(lEyeAreaAllowed))]]
+	rEyeEndYPos = centerY[rightEye[rEyeValuesArea.index(max(rEyeAreaAllowed))]]
+
+	lEyeEndZPos = sliceIdxs[leftEye[lEyeValuesArea.index(max(lEyeAreaAllowed))]]
+	rEyeEndZPos = sliceIdxs[rightEye[rEyeValuesArea.index(max(rEyeAreaAllowed))]]
+
+	#print lEyePrelimZPos, rEyePrelimZPos
+	#print lEyeEndZPos, rEyeEndZPos
+
+	print "LEye coord " + str((lEyeEndXPos, lEyeEndYPos, lEyeEndZPos))
+	print "REye coord " + str((rEyeEndXPos, rEyeEndYPos, rEyeEndZPos))
+
+	return (lEyeEndXPos, lEyeEndYPos, lEyeEndZPos), (rEyeEndXPos, rEyeEndYPos, rEyeEndZPos)
+
+
+'''
+Obtain eyes' coordinates from specific direction
+'''
+def getEyesCoordinates(imp, statisticDict, headings, orientation=0, BBox=None, restrictedByDepth=False, neighbourSlices=60, maxPrelimBBoxZPosResidual=100):
+	centerX = statisticsDict['X']
+	centerY = statisticsDict['Y']
+	sliceIdxs = statisticsDict['Slice']
+	areas = statisticsDict['Area']
+	dotXY = map(lambda x, y: x * y, statisticsDict['X'], statisticsDict['Y'])
+	indices = range(len(sliceIdxs))
+
+	if not BBox:
+		prelimBBoxSliceIdx = getPreliminaryBBoxZPosition(dotXY, areas, sliceIdxs, maxPrelimBBoxZPosResidual)
+		BBox = getEyesBoundingArea(imp, prelimBBoxSliceIdx)
+
+	LEyeCoord, REyeCoord = getEyesCoordinatesByOrientation(centerX, centerY, indices, sliceIdxs, orientation, BBox, restrictedByDepth, neighbourSlices)
+
+	return LEyeCoord, REyeCoord, BBox
 
 '''
 Perform filtering, binarizing, inverting and reslicing of the stack from Front, Top and Right 
@@ -317,7 +559,6 @@ def extractEyes(inputPath, outputPath, fishNumbers, fishPrefix, fileExt):
 		printLog("Filtring noisy slices", pathToVolume)
 		filteredStack = filterNoisedSices(imp, 5)
 		filteredTopReslice = performReslice(filteredStack, "Top")
-		filteredRightReslice = performReslice(filteredStack, "Right")
 
 		printLog("Binarizing and inverting", pathToVolume)
 		invertedStack = prepareInvertedBinaryStack(filteredStack, lowZbound, highZbound)
@@ -326,18 +567,27 @@ def extractEyes(inputPath, outputPath, fishNumbers, fishPrefix, fileExt):
 		invertedTopReslice = prepareInvertedBinaryStack(filteredTopReslice, 0, filteredTopReslice.getStackSize())
 		filteredTopReslice.close()
 
-		invertedRightReslice = prepareInvertedBinaryStack(filteredRightReslice, 0, filteredRightReslice.getStackSize())
-		filteredRightReslice.close()
-
 		printLog("Saving as tiff stack", pathToVolume)
 		saveTiff(invertedStack, outputPath, currentFileName)
 		saveTiff(invertedTopReslice, outputPath, 'top_' + currentFileName)
-		saveTiff(invertedRightReslice, outputPath, 'right_' + currentFileName)
+
+		printLog("Gathering the area and circularity statistic", pathToVolume)
+		statisticsDictFrontal, headingsFrontal = getCirlcesStatistics(invertedStack, currentPath, fishNumber, "front", 50, 0.85)
+		statisticsDictTop, headingsTop = getCirlcesStatistics(invertedTopReslice, currentPath, fishNumber, "top", 50, 0.85)
+
+		printLog("Get eyes coordinates", pathToVolume)
+		LEyeFrontalCoord, REyeFrontalCoord, BBox = getEyesCoordinates(invertedStack, statisticsDictFrontal, headingsFrontal)
+		LEyeTopCoord, REyeTopCoord, = getEyesCoordinates(invertedTopReslice, statisticsDictTop, headingsTop, 1, BBox, True)
+
+		printLog("Interpolate coordinates", pathToVolume)
+		LEyeCoord = getEyeCoordinate(LEyeFrontalCoord, LEyeTopCoord)
+		REyeCoord = getEyeCoordinate(REyeFrontalCoord, REyeTopCoord)
+
+		print str(LEyeCoord), str(REyeCoord)
 
 		imp.close()
 		invertedStack.close()
 		invertedTopReslice.close()
-		invertedRightReslice.close()
 
 '''
 Obtains the area statistic of the specified stack and saves into temp folder
@@ -379,9 +629,9 @@ def test2():
 	impBin = IJ.openImage("/Users/rshkarin/Documents/Fishes/fish202_binary/binary_median5_fish202_8bit_416x396x1857.tif")
 	getAreaStatistic(impBin, "/Users/rshkarin/Documents/Fishes/fish202_binary", 202, "frontal_meadian5", 1200)
 
-#extractEyes(inputPath, outputPath, fishNumbers, fishPrefix, fileExt)
+extractEyes(inputPath, outputPath, fishNumbers, fishPrefix, fileExt)
 #test()
-test2()
+#test2()
 
 
 
