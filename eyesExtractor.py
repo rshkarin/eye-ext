@@ -67,7 +67,15 @@ def filterNoisedSices(imp, percentOfBoundSlices):
 			pixels = ipt.convertToFloat().getPixels()
 
 			totalCount = len(pixels)
-			nonNull = len(filter(lambda x: x > 0, pixels))
+			#print totalCount
+			nonNull = 0
+			for p in pixels:
+				if p > 0:
+					nonNull = nonNull + 1
+			#print nonNull
+			#arr = filter(lambda x: x > 0, list(pixels))
+			#print arr
+			#nonNull = len(arr)
 
 			if float(nonNull)/totalCount < 0.5:
 				filteredStak.addSlice(imp.getImageStack().getProcessor(i + 1))
@@ -232,6 +240,8 @@ def getEyesBoundingArea(imp, sliceIdx, min_area=600, depth=60):
 	paOptions = ParticleAnalyzer.SHOW_PROGRESS + ParticleAnalyzer.CLEAR_WORKSHEET
 	paMeasurements = Measurements.AREA + Measurements.RECT
 	rt = ResultsTable()
+
+	sliceIdx = int(sliceIdx)
 
 	pa = ParticleAnalyzer(paOptions, paMeasurements, rt, min_area, Double.POSITIVE_INFINITY, 0.0, 1.0)
 	pa.setHideOutputImage(True)
@@ -414,7 +424,7 @@ Obtain preliminary BBox position on frontal Z direction
 def getPreliminaryBBoxZPosition(dotXY, areas, sliceIdxs, maxPrelimBBoxZPosResidual=100):
 	gaussVals = gauss(9, 9)
 
-	smoothAreaValues = [gaussVals(i, areas, 9, gaussVals) for i in range(len(areas))]
+	smoothAreaValues = [calcGauss(i, areas, 9, gaussVals) for i in range(len(areas))]
 	smoothXYValues = [calcStd(i, dotXY, 5) for i in range(len(dotXY))]
 
 	maxSmoothXY = max(smoothXYValues)
@@ -447,6 +457,8 @@ def getEyesCoordinatesByOrientation(centerX, centerY, indices, sliceIdxs, orient
 	leftEye = []
 	rightEye = []
 
+	print centerX
+	
 	for x, y, idx, sliceIdx in zip(centerX, centerY, indices, sliceIdxs):
 		if eyesSide((x, y), BBox, sliceIdx, orientation, restrictedByDepth) == 1:
 			leftEye.append(idx)
@@ -509,7 +521,7 @@ def getEyesCoordinatesByOrientation(centerX, centerY, indices, sliceIdxs, orient
 '''
 Obtain eyes' coordinates from specific direction
 '''
-def getEyesCoordinates(imp, statisticDict, headings, orientation=0, BBox=None, restrictedByDepth=False, neighbourSlices=60, maxPrelimBBoxZPosResidual=100):
+def getEyesCoordinates(imp, statisticsDict, headings, orientation=0, BBox=None, restrictedByDepth=False, neighbourSlices=60, maxPrelimBBoxZPosResidual=100):
 	centerX = statisticsDict['X']
 	centerY = statisticsDict['Y']
 	sliceIdxs = statisticsDict['Slice']
